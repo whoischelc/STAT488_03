@@ -1,0 +1,140 @@
+---
+title: "STAT488_03_HW6"
+author: "Chelsea Hu"
+date: "4/13/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Problem 1
+
+
+```{r 1}
+library(VIM)
+library(MASS)
+library(mice)
+library(data.table)
+library(dbplyr)
+library(dplyr)
+dat.og <- read.csv("ill_school_data.csv", header=T)
+dat <- read.csv("ill_school_data.csv", header=T,na.strings=c("", " ", NA))
+dat <- data.frame(dat)
+```
+
+
+# (a) Describe the data. Who is in this data set? What are some of the intersting characteristics of this data set?
+This dataset about  contains 60 different variables with approximately 500 observations each. It is data from Illinois high school students and some basic facts about them. For example, there are some measurements (height, armspan), demographics, and answers to some questionnaires it seems like.
+
+
+# (b) Perform the appropriate test to test the null hypothesis that handedness (i.e. the variable named Handed) is independent of favorite season vs the alternative hypothesis that there is some dependence. Perform this test after removing responses that are blank. Do you think it is ok here to remove the blanks? Explain why or why not. Explain your reasoning for the test you chose and state your conclusions.
+
+```{r 1b}
+dat.b <- dat %>% select(Handed, Favorite_Season)
+dat.b <- dat.b %>% filter(Handed %in% c("Right-Handed", "Left-Handed", "Ambidextrous"), 
+         Favorite_Season %in% c("Fall", "Spring", "Summer", "Winter"))
+dat.tab <- table(dat$Handed, dat$Favorite_Season); 
+chisq.test(dat.tab)
+fisher.test(dat.tab)
+
+#set.seed(1234)
+#n <- nrow(dat.b)
+#nsim <- 1000
+#XsqPerms <- rep(NA, 1000)
+#for (i in 1:nsim){
+#  datbTemp <- dat.b
+#  datbTemp$Handed <- dat.b$Handed[sample(1:n, n)]
+#  XsqPerms[i] <- chisq.test(datbTemp)$statistic
+#}
+#sum(XsqPerms >= XsqObs) / 1000
+```
+
+
+Performed a non-parametric chi-square test. Some frequencies were less than 5 so I ran a Firsher's test. At a p-value of 0.6253, we fail to reject the null hypothesis and conclude that there isn't sufficient evidence to conclude that there is a dependence. 
+
+
+# (c) Build a simple linear regression model with height as your response and arm span as your predictor. First, you need to clean the data, then use MICE to impute missing values using a CART model. Estimate the simple linear regression model on each of the compeleted data sets and use Rubin’s combining rules to combined estiamtes across imputations. State your final estimates for each of the slope and intercept parameters as well as standard errors for each of these combined estimates.
+
+
+```{r 1c}
+# change factors to numeric
+dat.1 <- dat %>% mutate(Height_cm = as.numeric(levels(Height_cm))[Height_cm], 
+Footlength_cm= as.numeric(levels(Footlength_cm))[Footlength_cm],
+Armspan_cm= as.numeric(levels(Armspan_cm))[Armspan_cm],
+Left_Footlength_cm= as.numeric(levels(Left_Footlength_cm))[Left_Footlength_cm],
+Index_Fingerlength_mm= as.numeric(levels(Index_Fingerlength_mm))[Index_Fingerlength_mm],
+Ring_Fingerlength_mm= as.numeric(levels(Ring_Fingerlength_mm))[Ring_Fingerlength_mm]) %>% select(Height_cm,
+         Footlength_cm,
+         Armspan_cm,
+         Left_Footlength_cm,
+         Index_Fingerlength_mm,
+         Ring_Fingerlength_mm)
+
+dat.1$Height_cm[which((dat.1$Height_cm < 100) | (dat.1$Height_cm >= 250))] <- NA
+dat.1$Footlength_cm[which((dat.1$Footlength_cm < 15) | (dat.1$Footlength_cm >= 36))] <- NA
+dat.1$Armspan_cm[which((dat.1$Armspan_cm < 120) | (dat.1$Armspan_cm >= 300))] <- NA
+dat.1$Left_Footlength_cm[which((dat.1$Left_Footlength_cm < 15) | (dat.1$Left_Footlength_cm >= 36))] <- NA
+dat.1$Index_Fingerlength_mm[which((dat.1$Index_Fingerlength_mm < 50) | (dat.1$Index_Fingerlength_mm >= 80))] <- NA
+dat.1$Ring_Fingerlength_mm[which((dat.1$Ring_Fingerlength_mm < 50) | (dat.1$Ring_Fingerlength_mm >= 80))] <- NA
+
+## MICE cart
+
+dat.2 <- dat %>% mutate(Height_cm = as.numeric(levels(Height_cm))[Height_cm], 
+Armspan_cm= as.numeric(levels(Armspan_cm))[Armspan_cm]) %>% select(Height_cm,
+         Armspan_cm)
+
+fit <- lm(Height_cm~Armspan_cm, data=dat.1)
+summary(fit)
+
+set.seed(1234)
+imp.dat2 <- mice(dat.2, m = 5, method = 'cart')
+impDatList <- list()
+impDatList[[1]]<-complete(imp.dat2)
+impDatList[[2]]<-complete(imp.dat2,2)
+impDatList[[3]]<-complete(imp.dat2,3)
+impDatList[[4]]<-complete(imp.dat2,4)
+impDatList[[5]]<-complete(imp.dat2,5)
+
+betaList<-seList<-list()
+for (i in 1:5){
+betaList[[i]]<-summary(lm(Height_cm ~ Armspan_cm,data=as.data.frame(impDatList[[i]])))$coefficients[,1]
+seList[[i]]<-summary(lm(Height_cm ~ Armspan_cm,data=as.data.frame(impDatList[[i]])))$coefficients[,2]
+}
+M <- 5
+apply(do.call(rbind,betaList),2,mean)
+B<-apply(do.call(rbind,betaList),2,var)
+W<-apply(do.call(rbind,seList)^2,2,mean)
+T<-(1+1/M)*B + W
+sqrt(T)
+```
+
+
+# (d) Repeat the previous problem, but use a random forest for imputation in MICE instead of a cart model.
+
+```{r 1d}
+imp.dat2 <- mice(dat.2, m = 5, method = 'rf')
+impDatList <- list()
+impDatList[[1]]<-complete(imp.dat2)
+impDatList[[2]]<-complete(imp.dat2,2)
+impDatList[[3]]<-complete(imp.dat2,3)
+impDatList[[4]]<-complete(imp.dat2,4)
+impDatList[[5]]<-complete(imp.dat2,5)
+
+betaList<-seList<-list()
+for (i in 1:5){
+betaList[[i]]<-summary(lm(Height_cm ~ Armspan_cm,data=as.data.frame(impDatList[[i]])))$coefficients[,1]
+seList[[i]]<-summary(lm(Height_cm ~ Armspan_cm,data=as.data.frame(impDatList[[i]])))$coefficients[,2]
+}
+
+
+M <- 5
+apply(do.call(rbind,betaList),2,mean)
+B<-apply(do.call(rbind,betaList),2,var)
+W<-apply(do.call(rbind,seList)^2,2,mean)
+T<-(1+1/M)*B + W
+
+sqrt(T)
+```
+
